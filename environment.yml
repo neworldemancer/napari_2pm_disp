@@ -1,0 +1,13 @@
+name: napari_2pm_disp
+channels:
+  - conda-forge
+dependencies:
+  - scikit-image
+  - jupyterlab
+  - tifffile
+  - imagecodecs
+  - napari
+  - wxpython
+  - pip
+  - pip:
+    - aicsimageio

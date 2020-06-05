@@ -93,7 +93,7 @@ def get_tiles_files_and_ofs(ds):
     else:
         return [n_x, n_y], tile_files, tile_ofs
         
-def read_dataset_from_seed_file(file):
+def read_dataset_from_seed_file(file, load_time):
     im = skimage.io.imread(file)
     
     sh = im.shape
@@ -111,10 +111,15 @@ def read_dataset_from_seed_file(file):
     tiles_nx_ny, tiles_files, tiles_ofs = get_tiles_files_and_ofs(data_aics)
     # print(tiles_ofs)
     # print(inf, im.shape)
-    # print(data_aics.data)
+    # print(data_aics.data.shape)
     inf['n_xy_tiles'] = tiles_nx_ny
     if tiles_nx_ny == [1,1]:
-        inf['tiles'] = [data_aics.data[0, 0].copy()]  # first position and time
+        
+        if load_time:
+            tile_data = data_aics.data[0, :].copy().transpose(1, 0, 2, 3, 4)  # first position
+        else:
+            tile_data = data_aics.data[0, 0].copy()  # first position and time
+        inf['tiles'] = [tile_data]  # first position and time
         inf['ofs'] = [(0,0,0)]
     else:
         tiles = []
@@ -122,9 +127,12 @@ def read_dataset_from_seed_file(file):
         for tile_names in tiles_files:
             tile_name = os.path.join(prfx, tile_names[0])
             data_aics = AICSImage(tile_name, known_dims=dims)
-            tile_data = data_aics.data[0, 0].copy()
-            #data_aics.close()
-            #del data_aics
+            
+            if load_time:
+                tile_data = data_aics.data[0, :].copy().transpose(1, 0, 2, 3, 4)  # first position
+            else:
+                tile_data = data_aics.data[0, 0].copy()  # first position and time
+
             tiles.append(tile_data)
         inf['tiles'] = tiles
         inf['ofs'] = tiles_ofs
@@ -177,30 +185,39 @@ def show_ds(ds_inf):
                 peak = b[np.argmax(h)]
                 clim = [peak, np.round(im.max() * 0.35)]
                 # add im as a layer
+                tscale = scale if len(im.shape)==3 else ([1]+[si for si in scale]) 
+                tofs = ofs if len(im.shape)==3 else ([0]+[oi for oi in ofs]) 
                 viewer.add_image(im,
                                  name=chname + (('_'+str(tile_idx)) if n_tile>1 else ''),
-                                 scale=scale,
+                                 scale=tscale,
                                  contrast_limits=clim,
                                  blending='additive',
                                  colormap=cols[ch],
-                                 translate=ofs,
+                                 translate=tofs,
                                  gamma=0.85)
-                                 
+
 def load_show_ds():
     list_of_files = glob.glob(__DS_ROOT)
-    latest_expepriment = max(list_of_files, key=os.path.getctime)
+    if list_of_files:
+        latest_expepriment = max(list_of_files, key=os.path.getctime)
+        start_dir = latest_expepriment+'\\'
+    else:
+        start_dir = None
 
-    latest_file = get_tif_path(latest_expepriment+'\\')
+    latest_file = get_tif_path(start_dir)
     
     print('loading from file', latest_file)
    
-    inf = read_dataset_from_seed_file(latest_file)
+    inf = read_dataset_from_seed_file(latest_file, load_time=True)
     
     show_ds(ds_inf=inf)
     
     
 def last_show_ds():
     list_of_files = glob.glob(__DS_ROOT)
+    if not list_of_files:
+        print(f'Root directory {__DS_ROOT} is empty or not found. Wrong path?')
+        return
     latest_expepriment = max(list_of_files, key=os.path.getctime)
     print('parsing experiment', latest_expepriment)
 
@@ -215,7 +232,7 @@ def last_show_ds():
     print('loading from file', latest_file)
 
 
-    inf = read_dataset_from_seed_file(latest_file)
+    inf = read_dataset_from_seed_file(latest_file, load_time=False)
     
     show_ds(ds_inf=inf)
 
