@@ -4,12 +4,15 @@
 import skimage.io
 import numpy as np
 import napari
+import locale
 import glob
 import os
 from time import sleep
 from aicsimageio import AICSImage
 import wx
+import re
 import argparse
+from PIL import Image 
     
 __DS_ROOT = r'd:\TrimScope_Data\*'
 
@@ -107,7 +110,7 @@ def read_dataset_from_seed_file(file, load_time):
     inf = {}
     data_aics = AICSImage(file, known_dims=dims)
     inf['res'] = data_aics.get_physical_pixel_size()
-    
+    #print(inf['res'])
     tiles_nx_ny, tiles_files, tiles_ofs = get_tiles_files_and_ofs(data_aics)
     # print(tiles_ofs)
     # print(inf, im.shape)
@@ -116,7 +119,7 @@ def read_dataset_from_seed_file(file, load_time):
     if tiles_nx_ny == [1,1]:
         
         if load_time:
-            tile_data = data_aics.data[0, :].copy().transpose(1, 0, 2, 3, 4)  # first position
+            tile_data = data_aics.data[0, :].transpose(1, 0, 2, 3, 4).copy()  # first position
         else:
             tile_data = data_aics.data[0, 0].copy()  # first position and time
         inf['tiles'] = [tile_data]  # first position and time
@@ -129,7 +132,7 @@ def read_dataset_from_seed_file(file, load_time):
             data_aics = AICSImage(tile_name, known_dims=dims)
             
             if load_time:
-                tile_data = data_aics.data[0, :].copy().transpose(1, 0, 2, 3, 4)  # first position
+                tile_data = data_aics.data[0, :].transpose(1, 0, 2, 3, 4).copy()  # first position
             else:
                 tile_data = data_aics.data[0, 0].copy()  # first position and time
 
@@ -138,6 +141,73 @@ def read_dataset_from_seed_file(file, load_time):
         inf['ofs'] = tiles_ofs
     return inf
     
+    
+def get_f_inf(filename):
+    re_res = re.findall('(.*)_Doc(.*)_PMT - PMT \[(.*)\] _C(.*)_Time Time(.*)\.ome.tif', filename)
+    if len(re_res):
+        timestamp, doc_id, color_desc, ch_id, t_id = re_res[0]
+        doc_id, ch_id, t_id = int(doc_id), int(ch_id), int(t_id)
+        return timestamp, doc_id, color_desc, ch_id, t_id
+    return None
+
+def read_mp_tiff(path):
+    """
+    Args:
+        path (str) : path to the images, e.g. `/path/to/stacks/img.png`
+
+    Returns:
+        image (np.ndarray): image, DHWC
+    """
+    img = Image.open(path)
+    images = []
+    for i in range(img.n_frames):
+        img.seek(i)
+        images.append(np.array(img))
+    return np.array(images)
+    
+def read_dataset_from_dir(fdir, load_time=True):
+    # list files
+    p = glob.glob(os.path.join(fdir, '*.ome.tif'))
+    #print(p)
+    
+    im = read_mp_tiff(p[0])
+    sh = list(im.shape)
+    #print(sh, im.dtype)
+    
+    f_infs = []
+    for f_p in p:
+        fn = os.path.basename(f_p)
+        f_inf = get_f_inf(fn)
+        f_infs.append(f_inf)
+        
+        #print(timestamp, doc_id, color_desc, ch_id, t_id)
+    
+    # find n available t & n_ch
+    n_t = np.max([f_inf[4] for f_inf in f_infs]) + 1
+    n_c = np.max([f_inf[3] for f_inf in f_infs]) + 1
+    #print(n_t, n_c)
+    
+    data = np.zeros(shape=[n_c, n_t]+sh, dtype=im.dtype)
+    
+    ts0 = f_infs[0][0]
+    
+    for f_p, f_inf in zip(p, f_infs):
+        timestamp, doc_id, color_desc, ch_id, t_id = f_inf
+        assert(timestamp == ts0)
+        
+        im = read_mp_tiff(f_p)
+        data[ch_id, t_id] = im
+    
+    #print(data.shape)
+    d = {
+         'res': ( 0.7, 0.7, 2),
+         'n_xy_tiles': [1, 1],
+         'tiles': [data],
+         'ofs': [(0,0,0)]
+        }
+    #print(d['res'])
+    return d
+            
 
 def get_path(wildcard, latest_dir):
     app = wx.App(None)
@@ -166,24 +236,59 @@ def show_ds(ds_inf):
     with napari.gui_qt():
         viewer = napari.Viewer(ndisplay=3)
 
-        chn = ['blue', 'green', 'red', 'far red']
-        cols = ['blue', 'green', 'red', 'gray']
+        chn = ['blue', 'green', 'red', 'far red', 'far far red']
+        cols = ['blue', 'green', 'red', 'gray', 'magma']
 
-        scale=ds_inf['res'][::-1]
+        scale = list(ds_inf['res'][::-1])
+        
+        #uncomment for true orientation & better scale
+        #scale[0] = min(scale[0], 4)
+        
+        #scale[1] = scale[1]*0.99
+        #scale[2] = scale[2]*1.09
+        print(scale)
 
         n_tile = len(ds_inf['tiles'])
+        if n_tile>1:
+            scale[1] = -scale[1]
+            
+        n_ch = 0
+
+        for tile_idx, (tile,ofs) in enumerate(zip(ds_inf['tiles'], ds_inf['ofs'])):
+            n_ch = len(tile)
+            break
+        n_ch = min(n_ch, 5)
+
+        peak_map = {}
+        clim_map = {}
+        for ch in range(n_ch):
+            ch_ims = []
+            for tile_idx, (tile,ofs) in enumerate(zip(ds_inf['tiles'], ds_inf['ofs'])):
+                ch_ims.append(tile[ch])
+                
+            im = np.array(ch_ims).flatten()
+            h, b = np.histogram(im, 100)
+            peak = b[np.argmax(h)]
+            clim = [peak, np.round(im.max() * 0.35)]
+            
+            peak_map[ch] = peak
+            clim_map[ch] = clim
+
         for tile_idx, (tile,ofs) in enumerate(zip(ds_inf['tiles'], ds_inf['ofs'])):
             print(f'loading tile {tile_idx}')
             ofs = ofs[::-1]
             #print(ofs, scale)
             for ch, im in enumerate(tile):
-                if ch>=4:
+                if ch>=5:
                     continue
                 chname = chn[ch]
                 
-                h, b = np.histogram(im.flatten(), 100)
-                peak = b[np.argmax(h)]
-                clim = [peak, np.round(im.max() * 0.35)]
+                #h, b = np.histogram(im.flatten(), 100)
+                #peak = b[np.argmax(h)]
+                #clim = [peak, np.round(im.max() * 0.35)]
+                peak = peak_map[ch]
+                clim = clim_map[ch]
+                
                 # add im as a layer
                 tscale = scale if len(im.shape)==3 else ([1]+[si for si in scale]) 
                 tofs = ofs if len(im.shape)==3 else ([0]+[oi for oi in ofs]) 
@@ -203,12 +308,29 @@ def load_show_ds():
         start_dir = latest_expepriment+'\\'
     else:
         start_dir = None
-
+    
+    print(start_dir)
     latest_file = get_tif_path(start_dir)
     
     print('loading from file', latest_file)
    
     inf = read_dataset_from_seed_file(latest_file, load_time=True)
+    #print(inf['tiles'][0].shape)
+    show_ds(ds_inf=inf)
+    
+def load_show_nmi():
+    list_of_files = glob.glob(__DS_ROOT)
+    if list_of_files:
+        latest_expepriment = max(list_of_files, key=os.path.getctime)
+        start_dir = latest_expepriment+'\\'
+    else:
+        start_dir = None
+
+    latest_file = get_tif_path(start_dir)
+    
+    print('loading from file', latest_file)
+   
+    inf = read_dataset_from_dir(os.path.dirname(latest_file), load_time=True)
     
     show_ds(ds_inf=inf)
     
@@ -227,7 +349,7 @@ def last_show_ds():
 
 
     list_of_files = glob.glob(latest_dataset+'\*.tif')
-    latest_file = max(list_of_files, key=os.path.getctime)
+    latest_file = min(list_of_files, key=os.path.getctime)
     
     print('loading from file', latest_file)
 
@@ -240,11 +362,17 @@ def display():
     parser = argparse.ArgumentParser()
     parser.add_argument("-l", "--last", help="show last dataset",
                         action="store_true")
+    parser.add_argument("-n", "--nometainfo", help="load dataset w/o metainfo",
+                        action="store_true")
     args = parser.parse_args()
     if args.last:
         last_show_ds()
+    elif args.nometainfo:
+        load_show_nmi()
     else:
         load_show_ds()
 
 if __name__ == "__main__": 
+    locale.setlocale(locale.LC_ALL, 'en-US')
     display()
+    

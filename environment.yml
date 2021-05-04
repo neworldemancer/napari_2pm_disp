@@ -2,6 +2,7 @@ name: napari_2pm_disp
 channels:
   - conda-forge
 dependencies:
+  - python=3.8
   - scikit-image
   - jupyterlab
   - tifffile
