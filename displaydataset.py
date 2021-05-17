@@ -12,9 +12,14 @@ from aicsimageio import AICSImage
 import wx
 import re
 import argparse
-from PIL import Image 
+from PIL import Image
+from magicgui import magicgui
+import pickle
     
 __DS_ROOT = r'd:\TrimScope_Data\*'
+_V = None
+_D = None
+_P = None
 
 def get_tiles_files_and_ofs(ds):
     metadata = ds.metadata
@@ -95,7 +100,27 @@ def get_tiles_files_and_ofs(ds):
         return [1,1], [],[]
     else:
         return [n_x, n_y], tile_files, tile_ofs
+
+def try_get_resolution(file, guess_res=(0.7, 0.7, 2)):
+    try:
+        im = skimage.io.imread(file)
+        sh = im.shape
         
+        dims_dict = {3: 'ZYX',
+                     4: 'CZYX',
+                     5: 'TCZYX'    
+                    }
+        dims = dims_dict.get(len(sh), 'ZYX')
+        
+        data_aics = AICSImage(file, known_dims=dims)
+        resolution = data_aics.get_physical_pixel_size()
+        
+        del im
+        del data_aics
+    except:
+        resolution = guess_res
+    return resolution
+    
 def read_dataset_from_seed_file(file, load_time):
     im = skimage.io.imread(file)
     
@@ -165,16 +190,22 @@ def read_mp_tiff(path):
         images.append(np.array(img))
     return np.array(images)
     
-def read_dataset_from_dir(fdir, load_time=True):
+def read_dataset_from_dir(fdir, load_time=True, prev_d=None, guess_res=(0.7, 0.7, 2)):
+    global _P
+    _P = fdir
     # list files
     p = glob.glob(os.path.join(fdir, '*.ome.tif'))
-    #print(p)
     
     im = read_mp_tiff(p[0])
     sh = list(im.shape)
     #print(sh, im.dtype)
     
     f_infs = []
+    
+    if prev_d is not None:
+        p_fnames = prev_d['fnames']
+        p = [pi for pi in p if pi not in p_fnames]
+    
     for f_p in p:
         fn = os.path.basename(f_p)
         f_inf = get_f_inf(fn)
@@ -183,7 +214,12 @@ def read_dataset_from_dir(fdir, load_time=True):
         #print(timestamp, doc_id, color_desc, ch_id, t_id)
     
     # find n available t & n_ch
-    n_t = np.max([f_inf[4] for f_inf in f_infs]) + 1
+    n_tb = np.min([f_inf[4] for f_inf in f_infs])
+    n_te = np.max([f_inf[4] for f_inf in f_infs])
+    n_t = n_te-n_tb+1
+    if n_t == 0:
+        return prev_d
+        
     n_c = np.max([f_inf[3] for f_inf in f_infs]) + 1
     #print(n_t, n_c)
     
@@ -191,35 +227,88 @@ def read_dataset_from_dir(fdir, load_time=True):
     
     ts0 = f_infs[0][0]
     
+    fnames = []
     for f_p, f_inf in zip(p, f_infs):
         timestamp, doc_id, color_desc, ch_id, t_id = f_inf
         assert(timestamp == ts0)
-        
+        fnames.append(f_p)
         im = read_mp_tiff(f_p)
-        data[ch_id, t_id] = im
+        data[ch_id, t_id-n_tb] = im
     
     #print(data.shape)
-    d = {
-         'res': ( 0.7, 0.7, 2),
-         'n_xy_tiles': [1, 1],
-         'tiles': [data],
-         'ofs': [(0,0,0)]
-        }
+    
+    # R&D on positions ('tiles') separate axis, every n-th of acquired images:
+    # data->rename to data_all, and store in dict, make padded to #positions, 
+    # keep track of prev true size in d - for concatenation
+    # data_view = data_all.view()
+    # data_view.shape = ((n_ch, n_time, n_tile, d, h, w)) ## will rise error upon wrong shapes
+    # use data_view in place of data as before, re-reshape upon tiles info setting and reloading
+    
+    #.reshape((1, 2, 2, 61, 512, 512))
+    #print(data.shape)
+    
+    if prev_d is None:
+        d = {
+             'res': guess_res,
+             'n_xy_tiles': [1, 1],
+             'tiles': [data],
+             'ofs': [(0,0,0)],
+             'fnames': fnames
+            }
+    else:
+        data_p = prev_d['tiles'][0]
+        res = prev_d['res']
+        data = np.concatenate((data_p, data), axis=1)
+        
+        p_fnames = prev_d['fnames']
+        fnames = p_fnames+fnames
+        d = {
+             'res': res,
+             'n_xy_tiles': [1, 1],
+             'tiles': [data],
+             'ofs': [(0,0,0)],
+             'fnames': fnames
+            }
+        
     #print(d['res'])
     return d
             
 
-def get_path(wildcard, latest_dir):
+def get_path_open(wildcard, latest_dir):
     app = wx.App(None)
+    #loc = wx.Locale(wx.LANGUAGE_ENGLISH_UK)
+    
     style = wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
     defaultDir=latest_dir or ''
+    
     dialog = wx.FileDialog(parent=None,
                            message='Select any file from the dataset you want to display:',
                            wildcard=wildcard,
                            defaultDir=defaultDir,
                            style=style)
-                           
-    print(defaultDir)
+    
+    #print(defaultDir)
+    if dialog.ShowModal() == wx.ID_OK:
+        path = dialog.GetPath()
+    else:
+        path = None
+    dialog.Destroy()
+    return path
+
+def get_path_save(wildcard, latest_dir):
+    app = wx.App(None)
+    #loc = wx.Locale(wx.LANGUAGE_ENGLISH_UK)
+    
+    style = wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT
+    defaultDir=latest_dir or ''
+    
+    dialog = wx.FileDialog(parent=None,
+                           message='Select any file from the dataset you want to display:',
+                           wildcard=wildcard,
+                           defaultDir=defaultDir,
+                           style=style)
+    
+    #print(defaultDir)
     if dialog.ShowModal() == wx.ID_OK:
         path = dialog.GetPath()
     else:
@@ -228,14 +317,133 @@ def get_path(wildcard, latest_dir):
     return path
 
 def get_tif_path(latest_dir=None):
-    p = get_path('OME-TIFF files (*.tif;*.tiff)|*.tif;*.tiff', latest_dir)
+    p = get_path_open('OME-TIFF files (*.tif;*.tiff)|*.tif;*.tiff', latest_dir)
     return p
 
-    
-def show_ds(ds_inf):
+@magicgui(call_button="reload")
+def reload_data():
+    try:
+        print('reloading', _V)
+        global _D
+        _D = read_dataset_from_dir(_P, True, _D)
+        print('r ok')
+        for tile in _D['tiles']:
+            n_ch = len(tile)
+            break
+            
+        i = 0
+        for tile_idx, (tile,ofs) in enumerate(zip(_D['tiles'], _D['ofs'])):
+            print(f'loading tile {tile_idx}')
+            ofs = ofs[::-1]
+            #print(ofs, scale)
+            for ch, im in enumerate(tile):
+                if ch>=5:
+                    continue
+                l = _V.layers[i]
+                l.data = im
+                l.refresh()
+                i += 1
+                print('r', i)
+        return 'ok!'
+    except ValueError:
+        return "ValueError!"
+        
+@magicgui(call_button="SaveParams")
+def save_disp_params():
+    try:
+        limits_dict = {}
+        layers = [l for l in _V.layers if isinstance(l, napari.layers.image.image.Image)]
+        for ch, l in enumerate(layers):
+            if ch>=5:
+                continue
+            #print(l.name, l.contrast_limits)
+            limits_dict[ch] = {
+                'contrast_limits': l.contrast_limits,
+                'visible': l.visible
+            }
+        
+        fname = get_path_save('DisplayLimitsConfig (*.dlc)|*.dlc', None)
+        with open(fname, 'wb') as f:
+            pickle.dump(limits_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
+        
+        return 'ok!'
+    except ValueError:
+        return "ValueError!"
+        
+@magicgui(call_button="LoadParams")
+def load_disp_params():
+    try:
+        fname = get_path_open('DisplayLimitsConfig (*.dlc)|*.dlc', None)
+        with open(fname, 'rb') as f:
+            limits_dict = pickle.load(f)
+        print(limits_dict)
+        
+        layers = [l for l in _V.layers if isinstance(l, napari.layers.image.image.Image)]
+        for ch, l in enumerate(layers):
+            if ch>=5 or ch not in limits_dict:
+                continue
+            
+            params = limits_dict[ch]
+            l.contrast_limits = params['contrast_limits']
+            l.visible = params['visible']
+            
+            l.refresh()
+        return 'ok!'
+    except ValueError:
+        return "ValueError!"
+        
+@magicgui(call_button='ChangeRes', layout='horizontal')
+def change_resolution(res_xy=0.7, res_z=2.):
+    try:
+        res = (res_xy, res_xy, res_z)
+        _D['res'] = res
+        
+        scale = list(res[::-1])
+        
+        layers = [l for l in _V.layers if isinstance(l, napari.layers.image.image.Image)]
+        for ch, l in enumerate(layers):
+            l.scale=scale
+            
+            l.refresh()
+        return 'ok!'
+    except ValueError:
+        return "ValueError!"
+        
+
+@magicgui(layout='horizontal', view_option={
+            "widget_type": "RadioButtons",
+            "orientation": "horizontal",
+            "choices": [("top", 0), ("left", 1), ("down", 2), ("bot", 3), ("right", 4), ("up", 5)],
+        },
+        auto_call=True
+    )
+def view_direction(view_option=0):
+    try:
+        angles={
+            0: (0,0,90),
+            1: (-90,-90,-90),
+            2: (0,0,180),
+            3: (0,0,-90),
+            4: (-90,90,90),
+            5: (-180,0,0)
+        }
+        a = angles[view_option]
+        _V.camera.angles = a
+        return 'ok!'
+    except ValueError:
+        return "ValueError!"
+       
+def show_ds(ds_inf, reload=False):
     with napari.gui_qt():
         viewer = napari.Viewer(ndisplay=3)
-
+        
+        viewer.scale_bar.visible = True
+        viewer.scale_bar.colored = True
+        #viewer.window.qt_viewer.scale_bar.color= 'black'
+        global _V
+        _V = viewer
+        global _D
+        _D = ds_inf
         chn = ['blue', 'green', 'red', 'far red', 'far far red']
         cols = ['blue', 'green', 'red', 'gray', 'magma']
 
@@ -290,16 +498,27 @@ def show_ds(ds_inf):
                 clim = clim_map[ch]
                 
                 # add im as a layer
-                tscale = scale if len(im.shape)==3 else ([1]+[si for si in scale]) 
-                tofs = ofs if len(im.shape)==3 else ([0]+[oi for oi in ofs]) 
+                ndim = len(im.shape)
+                ddim = ndim-3
+                tscale = scale if ndim==3 else ([1]*ddim+list(scale)) 
+                tofs = ofs if ndim==3 else ([0]*ddim+list(ofs)) 
                 viewer.add_image(im,
                                  name=chname + (('_'+str(tile_idx)) if n_tile>1 else ''),
                                  scale=tscale,
                                  contrast_limits=clim,
                                  blending='additive',
                                  colormap=cols[ch],
+                                 interpolation='nearest',
                                  translate=tofs,
                                  gamma=0.85)
+                                 
+        if reload:
+            viewer.window.add_dock_widget(reload_data)
+            viewer.window.add_dock_widget(change_resolution)
+            viewer.window.add_dock_widget(save_disp_params)
+            viewer.window.add_dock_widget(load_disp_params)
+            viewer.window.add_dock_widget(view_direction)
+            
 
 def load_show_ds():
     list_of_files = glob.glob(__DS_ROOT)
@@ -309,7 +528,6 @@ def load_show_ds():
     else:
         start_dir = None
     
-    print(start_dir)
     latest_file = get_tif_path(start_dir)
     
     print('loading from file', latest_file)
@@ -329,10 +547,11 @@ def load_show_nmi():
     latest_file = get_tif_path(start_dir)
     
     print('loading from file', latest_file)
-   
-    inf = read_dataset_from_dir(os.path.dirname(latest_file), load_time=True)
     
-    show_ds(ds_inf=inf)
+    guess_res = try_get_resolution(latest_file)
+    inf = read_dataset_from_dir(os.path.dirname(latest_file), load_time=True, guess_res=guess_res)
+    
+    show_ds(ds_inf=inf, reload=True)
     
     
 def last_show_ds():
