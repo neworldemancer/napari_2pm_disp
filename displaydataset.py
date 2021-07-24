@@ -123,6 +123,7 @@ def try_get_resolution(file, guess_res=(0.7, 0.7, 2)):
     
 def read_dataset_from_seed_file(file, load_time):
     im = skimage.io.imread(file)
+    title = os.path.basename(os.path.dirname(file))
     
     sh = im.shape
     
@@ -141,6 +142,8 @@ def read_dataset_from_seed_file(file, load_time):
     # print(inf, im.shape)
     # print(data_aics.data.shape)
     inf['n_xy_tiles'] = tiles_nx_ny
+    inf['title'] = title
+    
     if tiles_nx_ny == [1,1]:
         
         if load_time:
@@ -194,6 +197,8 @@ def read_dataset_from_dir(fdir, load_time=True, prev_d=None, guess_res=(0.7, 0.7
     global _P
     _P = fdir
     # list files
+    
+    title = os.path.basename(fdir)
     p = glob.glob(os.path.join(fdir, '*.ome.tif'))
     
     im = read_mp_tiff(p[0])
@@ -253,11 +258,13 @@ def read_dataset_from_dir(fdir, load_time=True, prev_d=None, guess_res=(0.7, 0.7
              'n_xy_tiles': [1, 1],
              'tiles': [data],
              'ofs': [(0,0,0)],
-             'fnames': fnames
+             'fnames': fnames,
+             'title': title
             }
     else:
         data_p = prev_d['tiles'][0]
         res = prev_d['res']
+        title = prev_d['title']
         data = np.concatenate((data_p, data), axis=1)
         
         p_fnames = prev_d['fnames']
@@ -267,7 +274,8 @@ def read_dataset_from_dir(fdir, load_time=True, prev_d=None, guess_res=(0.7, 0.7
              'n_xy_tiles': [1, 1],
              'tiles': [data],
              'ofs': [(0,0,0)],
-             'fnames': fnames
+             'fnames': fnames,
+             'title': title
             }
         
     #print(d['res'])
@@ -435,7 +443,9 @@ def view_direction(view_option=0):
        
 def show_ds(ds_inf, reload=False):
     with napari.gui_qt():
-        viewer = napari.Viewer(ndisplay=3)
+        title = ds_inf.get('title', None)
+        
+        viewer = napari.Viewer(ndisplay=3, title=title)
         
         viewer.scale_bar.visible = True
         viewer.scale_bar.colored = True
