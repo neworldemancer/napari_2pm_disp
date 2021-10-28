@@ -442,91 +442,91 @@ def view_direction(view_option=0):
         return "ValueError!"
        
 def show_ds(ds_inf, reload=False):
-        title = ds_inf.get('title', None)
-        
-        viewer = napari.Viewer(ndisplay=3, title=title)
-        
-        viewer.scale_bar.visible = True
-        viewer.scale_bar.colored = True
-        #viewer.window.qt_viewer.scale_bar.color= 'black'
-        global _V
-        _V = viewer
-        global _D
-        _D = ds_inf
-        chn = ['blue', 'green', 'red', 'far red', 'far far red']
-        cols = ['blue', 'green', 'red', 'gray', 'magma']
+    title = ds_inf.get('title', None)
+    
+    viewer = napari.Viewer(ndisplay=3, title=title)
+    
+    viewer.scale_bar.visible = True
+    viewer.scale_bar.colored = True
+    #viewer.window.qt_viewer.scale_bar.color= 'black'
+    global _V
+    _V = viewer
+    global _D
+    _D = ds_inf
+    chn = ['blue', 'green', 'red', 'far red', 'far far red']
+    cols = ['blue', 'green', 'red', 'gray', 'magma']
 
-        scale = list(ds_inf['res'][::-1])
-        
-        #uncomment for true orientation & better scale
-        #scale[0] = min(scale[0], 4)
-        
-        #scale[1] = scale[1]*0.99
-        #scale[2] = scale[2]*1.09
-        print(scale)
+    scale = list(ds_inf['res'][::-1])
+    
+    #uncomment for true orientation & better scale
+    #scale[0] = min(scale[0], 4)
+    
+    #scale[1] = scale[1]*0.99
+    #scale[2] = scale[2]*1.09
+    print(scale)
 
-        n_tile = len(ds_inf['tiles'])
-        if n_tile>1:
-            scale[1] = -scale[1]
-            
-        n_ch = 0
+    n_tile = len(ds_inf['tiles'])
+    if n_tile>1:
+        scale[1] = -scale[1]
+        
+    n_ch = 0
 
+    for tile_idx, (tile,ofs) in enumerate(zip(ds_inf['tiles'], ds_inf['ofs'])):
+        n_ch = len(tile)
+        break
+    n_ch = min(n_ch, 5)
+
+    peak_map = {}
+    clim_map = {}
+    for ch in range(n_ch):
+        ch_ims = []
         for tile_idx, (tile,ofs) in enumerate(zip(ds_inf['tiles'], ds_inf['ofs'])):
-            n_ch = len(tile)
-            break
-        n_ch = min(n_ch, 5)
-
-        peak_map = {}
-        clim_map = {}
-        for ch in range(n_ch):
-            ch_ims = []
-            for tile_idx, (tile,ofs) in enumerate(zip(ds_inf['tiles'], ds_inf['ofs'])):
-                ch_ims.append(tile[ch])
-                
-            im = np.array(ch_ims).flatten()
-            h, b = np.histogram(im, 100)
-            peak = b[np.argmax(h)]
-            clim = [peak, np.round(im.max() * 0.35)]
+            ch_ims.append(tile[ch])
             
-            peak_map[ch] = peak
-            clim_map[ch] = clim
+        im = np.array(ch_ims).flatten()
+        h, b = np.histogram(im, 100)
+        peak = b[np.argmax(h)]
+        clim = [peak, np.round(im.max() * 0.35)]
+        
+        peak_map[ch] = peak
+        clim_map[ch] = clim
 
-        for tile_idx, (tile,ofs) in enumerate(zip(ds_inf['tiles'], ds_inf['ofs'])):
-            print(f'loading tile {tile_idx}')
-            ofs = ofs[::-1]
-            #print(ofs, scale)
-            for ch, im in enumerate(tile):
-                if ch>=5:
-                    continue
-                chname = chn[ch]
-                
-                #h, b = np.histogram(im.flatten(), 100)
-                #peak = b[np.argmax(h)]
-                #clim = [peak, np.round(im.max() * 0.35)]
-                peak = peak_map[ch]
-                clim = clim_map[ch]
-                
-                # add im as a layer
-                ndim = len(im.shape)
-                ddim = ndim-3
-                tscale = scale if ndim==3 else ([1]*ddim+list(scale)) 
-                tofs = ofs if ndim==3 else ([0]*ddim+list(ofs)) 
-                viewer.add_image(im,
-                                 name=chname + (('_'+str(tile_idx)) if n_tile>1 else ''),
-                                 scale=tscale,
-                                 contrast_limits=clim,
-                                 blending='additive',
-                                 colormap=cols[ch],
-                                 interpolation='nearest',
-                                 translate=tofs,
-                                 gamma=0.85)
-                                 
-        if reload:
-            viewer.window.add_dock_widget(reload_data)
-            viewer.window.add_dock_widget(change_resolution)
-            viewer.window.add_dock_widget(save_disp_params)
-            viewer.window.add_dock_widget(load_disp_params)
-            viewer.window.add_dock_widget(view_direction)
+    for tile_idx, (tile,ofs) in enumerate(zip(ds_inf['tiles'], ds_inf['ofs'])):
+        print(f'loading tile {tile_idx}')
+        ofs = ofs[::-1]
+        #print(ofs, scale)
+        for ch, im in enumerate(tile):
+            if ch>=5:
+                continue
+            chname = chn[ch]
+            
+            #h, b = np.histogram(im.flatten(), 100)
+            #peak = b[np.argmax(h)]
+            #clim = [peak, np.round(im.max() * 0.35)]
+            peak = peak_map[ch]
+            clim = clim_map[ch]
+            
+            # add im as a layer
+            ndim = len(im.shape)
+            ddim = ndim-3
+            tscale = scale if ndim==3 else ([1]*ddim+list(scale)) 
+            tofs = ofs if ndim==3 else ([0]*ddim+list(ofs)) 
+            viewer.add_image(im,
+                             name=chname + (('_'+str(tile_idx)) if n_tile>1 else ''),
+                             scale=tscale,
+                             contrast_limits=clim,
+                             blending='additive',
+                             colormap=cols[ch],
+                             interpolation='nearest',
+                             translate=tofs,
+                             gamma=0.85)
+                             
+    if reload:
+        viewer.window.add_dock_widget(reload_data)
+        viewer.window.add_dock_widget(change_resolution)
+        viewer.window.add_dock_widget(save_disp_params)
+        viewer.window.add_dock_widget(load_disp_params)
+        viewer.window.add_dock_widget(view_direction)
             
 
     napari.run()
