@@ -7,8 +7,10 @@ dependencies:
   - jupyterlab
   - tifffile
   - imagecodecs
-  - napari
   - wxpython
   - pip
+  - magicgui 
+  - pyqt
   - pip:
     - aicsimageio
+    - napari[all]

@@ -421,7 +421,7 @@ def change_resolution(res_xy=0.7, res_z=2.):
 @magicgui(layout='horizontal', view_option={
             "widget_type": "RadioButtons",
             "orientation": "horizontal",
-            "choices": [("top", 0), ("left", 1), ("down", 2), ("bot", 3), ("right", 4), ("up", 5)],
+            "choices": [("top", 0), ("left", 1), ("front", 2), ("bot", 3), ("right", 4), ("back", 5)],
         },
         auto_call=True
     )
@@ -448,6 +448,8 @@ def show_ds(ds_inf, reload=False):
     
     viewer.scale_bar.visible = True
     viewer.scale_bar.colored = True
+    viewer.scale_bar.unit = 'um'
+	
     #viewer.window.qt_viewer.scale_bar.color= 'black'
     global _V
     _V = viewer
@@ -603,6 +605,7 @@ def display():
         load_show_ds()
 
 if __name__ == "__main__": 
-    locale.setlocale(locale.LC_ALL, 'en-US')
+    #locale.setlocale(locale.LC_ALL, 'en-US')
+    locale.setlocale(locale.LC_ALL, '')
     display()
     
