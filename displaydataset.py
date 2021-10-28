@@ -442,7 +442,6 @@ def view_direction(view_option=0):
         return "ValueError!"
        
 def show_ds(ds_inf, reload=False):
-    with napari.gui_qt():
         title = ds_inf.get('title', None)
         
         viewer = napari.Viewer(ndisplay=3, title=title)
@@ -529,6 +528,8 @@ def show_ds(ds_inf, reload=False):
             viewer.window.add_dock_widget(load_disp_params)
             viewer.window.add_dock_widget(view_direction)
             
+
+    napari.run()
 
 def load_show_ds():
     list_of_files = glob.glob(__DS_ROOT)
