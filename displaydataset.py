@@ -20,6 +20,8 @@ __DS_ROOT = r'd:\TrimScope_Data\*'
 _V = None
 _D = None
 _P = None
+_N_tiles = 1
+_N_read = 0
 
 def get_tiles_files_and_ofs(ds):
     metadata = ds.metadata
@@ -195,6 +197,7 @@ def read_mp_tiff(path):
     
 def read_dataset_from_dir(fdir, load_time=True, prev_d=None, guess_res=(0.7, 0.7, 2)):
     global _P
+    global _N_read
     _P = fdir
     # list files
     
@@ -203,32 +206,53 @@ def read_dataset_from_dir(fdir, load_time=True, prev_d=None, guess_res=(0.7, 0.7
     
     im = read_mp_tiff(p[0])
     sh = list(im.shape)
-    #print(sh, im.dtype)
+    print(sh, im.dtype)
     
     f_infs = []
     
     if prev_d is not None:
         p_fnames = prev_d['fnames']
         p = [pi for pi in p if pi not in p_fnames]
-    
+    else:
+        _N_read = 0
+        
     for f_p in p:
         fn = os.path.basename(f_p)
         f_inf = get_f_inf(fn)
         f_infs.append(f_inf)
         
-        #print(timestamp, doc_id, color_desc, ch_id, t_id)
-    
+    if len(f_infs) == 0:
+        return prev_d
+        
     # find n available t & n_ch
     n_tb = np.min([f_inf[4] for f_inf in f_infs])
     n_te = np.max([f_inf[4] for f_inf in f_infs])
     n_t = n_te-n_tb+1
+    #print(n_t)
     if n_t == 0:
         return prev_d
         
     n_c = np.max([f_inf[3] for f_inf in f_infs]) + 1
     #print(n_t, n_c)
     
-    data = np.zeros(shape=[n_c, n_t]+sh, dtype=im.dtype)
+    # extend:
+    if prev_d is None:
+        n_t_split = int(np.ceil(n_t/_N_tiles))
+        data_all = np.zeros(shape=[n_c, n_t_split * _N_tiles]+sh, dtype=im.dtype)
+        
+    else:
+        n_tot_prev = _N_read
+        n_tot_new = n_tot_prev + n_t
+        
+        data_all_old = prev_d['data_all'][0]
+        
+        n_t_split_old = data_all_old.shape[1] // _N_tiles
+        n_t_split_new = int(np.ceil(n_tot_new/_N_tiles))
+        
+        delta_n_t = n_t_split_new - n_t_split_old
+        
+        data = np.zeros(shape=[n_c, delta_n_t * _N_tiles]+sh, dtype=im.dtype)
+        data_all = np.concatenate((data_all_old, data), axis=1)
     
     ts0 = f_infs[0][0]
     
@@ -238,7 +262,14 @@ def read_dataset_from_dir(fdir, load_time=True, prev_d=None, guess_res=(0.7, 0.7
         assert(timestamp == ts0)
         fnames.append(f_p)
         im = read_mp_tiff(f_p)
-        data[ch_id, t_id-n_tb] = im
+        print(f_p)
+        data_all[ch_id, _N_read + t_id-n_tb] = im
+    
+    _N_read += n_t
+        
+    data_view = data_all.view()
+    n_t_tot = data_all.shape[1]
+    data_view.shape = ([n_c, n_t_tot//_N_tiles, _N_tiles]+sh)
     
     #print(data.shape)
     
@@ -256,23 +287,25 @@ def read_dataset_from_dir(fdir, load_time=True, prev_d=None, guess_res=(0.7, 0.7
         d = {
              'res': guess_res,
              'n_xy_tiles': [1, 1],
-             'tiles': [data],
+             'tiles': [data_view],
+             'data_all': [data_all],
              'ofs': [(0,0,0)],
              'fnames': fnames,
              'title': title
             }
     else:
-        data_p = prev_d['tiles'][0]
+        #data_p = prev_d['tiles'][0]
         res = prev_d['res']
         title = prev_d['title']
-        data = np.concatenate((data_p, data), axis=1)
+        #data = np.concatenate((data_p, data), axis=1)
         
         p_fnames = prev_d['fnames']
         fnames = p_fnames+fnames
         d = {
              'res': res,
              'n_xy_tiles': [1, 1],
-             'tiles': [data],
+             'tiles': [data_view],
+             'data_all': [data_all],
              'ofs': [(0,0,0)],
              'fnames': fnames,
              'title': title
@@ -328,14 +361,59 @@ def get_tif_path(latest_dir=None):
     p = get_path_open('OME-TIFF files (*.tif;*.tiff)|*.tif;*.tiff', latest_dir)
     return p
 
+@magicgui(call_button="Tiles")
+def set_n_tiles(n_tiles=1):
+    global _N_tiles
+    
+    if n_tiles != _N_tiles and n_tiles>0:
+        _N_tiles = n_tiles
+        
+        data_all_old = _D['data_all'][0][:, :_N_read]
+        
+        n_c, n_t, *sh = list(data_all_old.shape)
+        
+        n_t_split_new = int(np.ceil(_N_read/_N_tiles))
+        
+        n_extra = n_t_split_new*_N_tiles - _N_read
+        if n_extra>0:
+            data = np.zeros(shape=[n_c, n_extra]+sh, dtype=data_all_old.dtype)
+            data_all = np.concatenate((data_all_old, data), axis=1)
+        else:
+            data_all = data_all_old
+            
+        data_view = data_all.view()
+        n_t_tot = data_all.shape[1]
+        data_view.shape = ([n_c, n_t_tot//_N_tiles, _N_tiles]+sh)
+        print(data_view.shape, data_all.shape)
+        _D['data_all'] = [data_all]
+        _D['tiles'] = [data_view]
+        
+        i = 0
+        for tile_idx, (tile,ofs) in enumerate(zip(_D['tiles'], _D['ofs'])):
+            print(f'loading tile {tile_idx}')
+            ofs = ofs[::-1]
+            #print(ofs, tile.shape)
+            for ch, im in enumerate(tile):
+                if ch>=5:
+                    continue
+                l = _V.layers[i]
+                l.data = im
+                l.refresh()
+                i += 1
+                print('r', i)
+
 @magicgui(call_button="reload")
 def reload_data():
     try:
         print('reloading', _V)
         global _D
-        _D = read_dataset_from_dir(_P, True, _D)
         print('r ok')
-        for tile in _D['tiles']:
+        _D = read_dataset_from_dir(_P, True, _D)
+        
+        for i, tile in enumerate(_D['tiles']):
+            sh = list(tile.shape)
+            #print(sh) #[4, 4, 136, 512, 512]
+            _D['tiles'][i] = tile
             n_ch = len(tile)
             break
             
@@ -354,6 +432,7 @@ def reload_data():
                 print('r', i)
         return 'ok!'
     except ValueError:
+        print('ve')
         return "ValueError!"
         
 @magicgui(call_button="SaveParams")
@@ -525,6 +604,7 @@ def show_ds(ds_inf, reload=False):
                              
     if reload:
         viewer.window.add_dock_widget(reload_data)
+        viewer.window.add_dock_widget(set_n_tiles)
         viewer.window.add_dock_widget(change_resolution)
         viewer.window.add_dock_widget(save_disp_params)
         viewer.window.add_dock_widget(load_disp_params)
