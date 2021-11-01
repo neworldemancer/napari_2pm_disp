@@ -174,10 +174,24 @@ def read_dataset_from_seed_file(file, load_time):
     
 def get_f_inf(filename):
     re_res = re.findall('(.*)_Doc(.*)_PMT - PMT \[(.*)\] _C(.*)_Time Time(.*)\.ome.tif', filename)
+
+    #print(re_res)
     if len(re_res):
         timestamp, doc_id, color_desc, ch_id, t_id = re_res[0]
         doc_id, ch_id, t_id = int(doc_id), int(ch_id), int(t_id)
         return timestamp, doc_id, color_desc, ch_id, t_id
+    else:
+        # handling file manes with missing 'D`oc<ID>_'
+        re_res = re.findall('(.*)_PMT - PMT \[(.*)\] _C(.*)_Time Time(.*)\.ome.tif', filename)
+        #                   12-28-20_PMT - PMT [7FarRED] _C03_Time Time0000.ome.tif
+        #print(re_res)
+        if len(re_res):
+            timestamp, color_desc, ch_id, t_id = re_res[0]
+            doc_id = 1 # dummy ID
+            doc_id, ch_id, t_id = int(doc_id), int(ch_id), int(t_id)
+            return timestamp, doc_id, color_desc, ch_id, t_id
+        return None
+
     return None
 
 def read_mp_tiff(path):
@@ -216,6 +230,8 @@ def read_dataset_from_dir(fdir, load_time=True, prev_d=None, guess_res=(0.7, 0.7
     else:
         _N_read = 0
         
+    #print (p)
+
     for f_p in p:
         fn = os.path.basename(f_p)
         f_inf = get_f_inf(fn)
@@ -225,6 +241,7 @@ def read_dataset_from_dir(fdir, load_time=True, prev_d=None, guess_res=(0.7, 0.7
         return prev_d
         
     # find n available t & n_ch
+    #print(f_infs)
     n_tb = np.min([f_inf[4] for f_inf in f_infs])
     n_te = np.max([f_inf[4] for f_inf in f_infs])
     n_t = n_te-n_tb+1
