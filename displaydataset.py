@@ -584,7 +584,7 @@ def show_ds(ds_inf, reload=False):
         im = np.array(ch_ims).flatten()
         h, b = np.histogram(im, 100)
         peak = b[np.argmax(h)]
-        clim = [peak, np.round(im.max() * 0.35)]
+        clim = [peak, max(peak+10, np.round(im.max() * 0.35))]
         
         peak_map[ch] = peak
         clim_map[ch] = clim
